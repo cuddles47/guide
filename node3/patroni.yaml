@@ -1,0 +1,117 @@
+namespace: percona_lab_ducnm2
+scope: clusterdevops_ducnm2
+name: core-3
+
+restapi:
+    listen: 0.0.0.0:8008
+    connect_address: 192.168.1.157:8008
+
+etcd3:
+  hosts: [192.168.1.155:2379, 192.168.1.156:2379, 192.168.1.157:2379]
+#      - 172.24.13.131:2379
+#      - 172.24.13.132:2379
+#      - 172.24.13.133:2379
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    # added conf
+    synchronous_mode: true
+    # original: synchronous_mode_strict: false
+    synchronous_mode_strict: true
+    synchronous_node_count: 1
+    # ---
+    postgresql:
+      #data_dir: /var/lib/postgresql/17/main
+      #config_dir: /etc/postgresql/17/main
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: 'on'
+        # original: wal_keep_segments: 10
+        wal_keep_size: 256MB
+        # original: max_wal_senders: 5
+        max_wal_senders: 4
+        # original: max_replication_slots: 10
+        max_replication_slots: 4
+        wal_log_hints: 'on'
+        logging_collector: 'on'
+        # original: max_wal_size: '100MB'
+        max_wal_size: 512MB
+        archive_mode: on
+        archive_timeout: 600s
+        archive_command: 'pgbackrest --stanza=cluster_1 archive-push %p'
+        timezone: 'Asia/Ho_Chi_Minh'
+        work_mem: 4MB
+        # original: max_connections: 100
+
+        #added config
+        # original: max_worker_processes: 16
+        max_worker_processes: 4
+        # original: max_parallel_workers: 12
+        max_parallel_workers: 2
+        # original: max_parallel_workers_per_gather: 4
+        max_parallel_workers_per_gather: 1
+        # original: max_parallel_maintenance_workers: 3
+        max_parallel_maintenance_workers: 1
+        parallel_leader_participation: on
+        # original: shared_buffers: 2GB
+        shared_buffers: 256MB
+        # original: effective_cache_size: 6GB
+        effective_cache_size: 1GB
+        # original: maintenance_work_mem: 512MB
+        maintenance_work_mem: 64MB
+        # original: max_connections: 200
+        max_connections: 50
+        # original: synchronous_commit: remote_write
+        synchronous_commit: on
+        # original: synchronous_standby_names: '*'
+        # ---
+      pg_hba:
+        - local   all             all                                 peer
+        - host    replication     replicator   127.0.0.1/32           trust
+        - host    replication     replicator   192.168.1.0/24         scram-sha-256
+        - host    all             all          0.0.0.0/0              scram-sha-256
+      recovery_conf:
+        restore_command: 'pgbackrest --stanza=cluster_1 archive-get %f "%p"'
+        
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+postgresql:
+  cluster_name: cluster_1
+  listen: 0.0.0.0:5432
+  connect_address: 192.168.1.157:5432
+  data_dir: /var/lib/postgresql/17/main
+  config_dir: /etc/postgresql/17/main
+  bin_dir: /usr/lib/postgresql/17/bin
+  pgpass: /opt/secretpg/pgpass
+  authentication:
+    replication:
+      username: replicator
+      password: jojobizzare444
+    superuser:
+      username: postgres
+      password: skkrskrrpowwpowwwavadakedavra
+  parameters:
+    unix_socket_directories: /var/run/postgresql/
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    checkpoint: 'fast'
+  pg_hba:
+    - local   all             all                                 peer
+    - host    replication     replicator   127.0.0.1/32           trust
+    - host    replication     replicator   192.168.1.0/24         scram-sha-256
+    - host    all             all          0.0.0.0/0              scram-sha-256
+watchdog:
+  mode: off
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false
