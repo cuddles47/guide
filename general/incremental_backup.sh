@@ -2,12 +2,26 @@
 set -Eeuo pipefail
 
 # --- Cấu hình kết nối PostgreSQL và backup ---
-PGHOST=127.0.0.1
+PGHOST=192.168.1.156
 PGPORT=5432
 PGUSER=backup
 PGPASSWORD=change-me
 BACKUP_ROOT=/var/backups/postgresql/cluster_1
 BACKUP_RETENTION_DAYS=30
+
+# --- Cấu hình MinIO (bật/tắt và thông tin kết nối) ---
+MINIO_ENABLED=false
+MINIO_ENDPOINT=http://100.85.22.67:9001
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=postgresql-backup
+MINIO_ALIAS=pgbackup
+
+# --- Cấu hình NetBackup (bật/tắt và thông tin kết nối) ---
+NETBACKUP_ENABLED=false
+NETBACKUP_POLICY=PostgreSQL_Backup
+NETBACKUP_CLIENT=$(hostname)
+NETBACKUP_SERVER=netbackup-master
 
 # --- Đặt umask 077 để đảm bảo file backup chỉ owner mới đọc được ---
 umask 077
@@ -107,6 +121,54 @@ fi
 pg_basebackup "${backup_args[@]}"
 printf 'Backup completed: %s\n' "$backup_dir"
 
+# --- Đẩy backup lên MinIO nếu được bật ---
+if [[ "$MINIO_ENABLED" == "true" ]]; then
+    printf 'Pushing backup to MinIO...\n'
+    if command -v mc &>/dev/null; then
+        if ! mc alias list "$MINIO_ALIAS" &>/dev/null; then
+            mc alias set "$MINIO_ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+        fi
+        mc mirror "$backup_dir" "$MINIO_ALIAS/$MINIO_BUCKET/$timestamp"
+        printf 'Backup pushed to MinIO successfully.\n'
+    elif command -v aws &>/dev/null; then
+        export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
+        export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
+        aws --endpoint-url "$MINIO_ENDPOINT" s3 sync "$backup_dir" "s3://$MINIO_BUCKET/$timestamp"
+        printf 'Backup pushed to MinIO via aws cli successfully.\n'
+    else
+        printf 'MinIO client tools (mc or aws) not found.\n' >&2
+        exit 1
+    fi
+fi
+
+# --- Đẩy backup lên NetBackup nếu được bật ---
+if [[ "$NETBACKUP_ENABLED" == "true" ]]; then
+    printf 'Pushing backup to NetBackup...\n'
+    if command -v nbbackup &>/dev/null; then
+        nbbackup -policy "$NETBACKUP_POLICY" -client "$NETBACKUP_CLIENT" -server "$NETBACKUP_SERVER" -source "$backup_dir"
+        printf 'Backup pushed to NetBackup successfully.\n'
+    elif command -v bpcd &>/dev/null; then
+        tar -cf - -C "$backup_dir" . | bpcd -client "$NETBACKUP_CLIENT" -policy "$NETBACKUP_POLICY"
+        printf 'Backup pushed to NetBackup via bpcd successfully.\n'
+    else
+        printf 'NetBackup client tools (nbbackup or bpcd) not found.\n' >&2
+        exit 1
+    fi
+fi
+
 # --- Xóa các backup cũ hơn số ngày lưu trữ (retention policy) ---
 find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime "+$BACKUP_RETENTION_DAYS" -exec rm -rf -- {} +
+
+# --- Xóa backup cũ trên MinIO nếu được bật ---
+if [[ "$MINIO_ENABLED" == "true" ]]; then
+    if command -v mc &>/dev/null; then
+        mc find "$MINIO_ALIAS/$MINIO_BUCKET" --newer-than "${BACKUP_RETENTION_DAYS}d" --exec "mc rm -r --force {}"
+    elif command -v aws &>/dev/null; then
+        aws --endpoint-url "$MINIO_ENDPOINT" s3 ls "s3://$MINIO_BUCKET/" | \
+            awk '{print $4}' | while read -r prefix; do
+                aws --endpoint-url "$MINIO_ENDPOINT" s3 rm "s3://$MINIO_BUCKET/$prefix" --recursive
+            done
+    fi
+fi
+
 trap - EXIT

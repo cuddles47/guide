@@ -91,7 +91,7 @@ postgresql:
   config_dir: /etc/postgresql/17/main
   bin_dir: /usr/lib/postgresql/17/bin
   # original: pgpass: /opt/secretpg/pgpass
-  pgpass: /opt/secretpg/pgpass1
+  pgpass: /opt/secretpg/pgpass
   authentication:
     replication:
       username: replicator
@@ -108,7 +108,7 @@ postgresql:
   pg_hba:
     - local   all             all                                 peer
     - host    replication     replicator   127.0.0.1/32           trust
-    - host    replication     replicator   192.168.1.0/25       scram-sha-256
+    - host    replication     replicator   192.168.1.0/25         scram-sha-256
     - host    all             all          0.0.0.0/0              scram-sha-256
 watchdog:
   mode: off

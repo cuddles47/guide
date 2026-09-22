@@ -5,6 +5,20 @@ set -Eeuo pipefail
 LOG_FILE="/var/log/pgbackrest/backup.log"
 LOCK_FILE="/tmp/pgbackrest-backup.lock"
 
+# --- Cấu hình MinIO (bật/tắt và thông tin kết nối) ---
+MINIO_ENABLED=false
+MINIO_ENDPOINT=http://100.85.22.67:9001
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=pgbackrest-backup
+
+# --- Cấu hình NetBackup (bật/tắt và thông tin kết nối) ---
+NETBACKUP_ENABLED=false
+NETBACKUP_POLICY=PostgreSQL_Backup
+NETBACKUP_CLIENT=$(hostname)
+NETBACKUP_SERVER=netbackup-master
+PG_BACKUP_REPO=/var/lib/pgbackrest
+
 # --- Lock file: đảm bảo chỉ 1 tiến trình backup chạy tại 1 thời điểm ---
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
@@ -62,13 +76,59 @@ fi
 echo "$(date): Starting backup" >> "$LOG_FILE"
 
 # --- Thực hiện backup full và ghi log chi tiết ---
-if sudo -u postgres pgbackrest backup --stanza=cluster_1 --type=full --log-level-console=info >> "$LOG_FILE" 2>&1; then
+# if sudo -u postgres pgbackrest backup --stanza=cluster_1 --type=full --log-level-console=info >> "$LOG_FILE" 2>&1; then
+#     echo "$(date): Backup completed successfully" >> "$LOG_FILE"
+# else
+#     echo "$(date): Backup failed with exit code $?" >> "$LOG_FILE"
+#     exit 1
+# fi
+if sudo -u postgres pgbackrest backup \
+    --stanza=cluster_1 \
+    --type=full \
+    --log-level-console=info >> "$LOG_FILE" 2>&1
+then
     echo "$(date): Backup completed successfully" >> "$LOG_FILE"
 else
-    echo "$(date): Backup failed with exit code $?" >> "$LOG_FILE"
-    exit 1
+    rc=$?
+    echo "$(date): Backup failed with exit code $rc" >> "$LOG_FILE"
+    exit "$rc"
 fi
 
 # --- Xóa các backup cũ theo chính sách lưu trữ đã cấu hình ---
 echo "$(date): Cleaning old backups" >> "$LOG_FILE"
 sudo -u postgres pgbackrest expire --stanza=cluster_1 --log-level-console=info >> "$LOG_FILE" 2>&1
+
+# --- Đẩy repository pgbackrest lên MinIO nếu được bật ---
+if [[ "$MINIO_ENABLED" == "true" ]]; then
+    echo "$(date): Pushing pgbackrest repository to MinIO" >> "$LOG_FILE"
+    if command -v mc &>/dev/null; then
+        if ! mc alias list pgbackup &>/dev/null; then
+            mc alias set pgbackup "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+        fi
+        mc mirror "$PG_BACKUP_REPO" "pgbackup/$MINIO_BUCKET" >> "$LOG_FILE" 2>&1
+        echo "$(date): Repository pushed to MinIO successfully" >> "$LOG_FILE"
+    elif command -v aws &>/dev/null; then
+        export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
+        export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
+        aws --endpoint-url "$MINIO_ENDPOINT" s3 sync "$PG_BACKUP_REPO" "s3://$MINIO_BUCKET" >> "$LOG_FILE" 2>&1
+        echo "$(date): Repository pushed to MinIO via aws cli successfully" >> "$LOG_FILE"
+    else
+        echo "$(date): MinIO client tools (mc or aws) not found" >> "$LOG_FILE"
+        exit 1
+    fi
+fi
+
+# --- Đẩy repository pgbackrest lên NetBackup nếu được bật ---
+if [[ "$NETBACKUP_ENABLED" == "true" ]]; then
+    echo "$(date): Pushing pgbackrest repository to NetBackup" >> "$LOG_FILE"
+    if command -v nbbackup &>/dev/null; then
+        nbbackup -policy "$NETBACKUP_POLICY" -client "$NETBACKUP_CLIENT" -server "$NETBACKUP_SERVER" -source "$PG_BACKUP_REPO" >> "$LOG_FILE" 2>&1
+        echo "$(date): Repository pushed to NetBackup successfully" >> "$LOG_FILE"
+    elif command -v bpcd &>/dev/null; then
+        tar -cf - -C "$PG_BACKUP_REPO" . | bpcd -client "$NETBACKUP_CLIENT" -policy "$NETBACKUP_POLICY" >> "$LOG_FILE" 2>&1
+        echo "$(date): Repository pushed to NetBackup via bpcd successfully" >> "$LOG_FILE"
+    else
+        echo "$(date): NetBackup client tools (nbbackup or bpcd) not found" >> "$LOG_FILE"
+        exit 1
+    fi
+fi

@@ -22,9 +22,9 @@ fi
 
 # --- Tạo thư mục config/log/spool và phân quyền cho postgres ---
 echo "=== Configuring pgBackRest ==="
-mkdir -p /etc/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest
-chown postgres:postgres /var/log/pgbackrest /var/spool/pgbackrest
-chmod 750 /var/log/pgbackrest /var/spool/pgbackrest
+mkdir -p /etc/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest /var/lib/pgbackrest
+chown postgres:postgres /var/log/pgbackrest /var/spool/pgbackrest /var/lib/pgbackrest
+chmod 750 /var/log/pgbackrest /var/spool/pgbackrest /var/lib/pgbackrest
 
 cp "$CONFIG_FILE" /etc/pgbackrest/pgbackrest.conf
 chown postgres:postgres /etc/pgbackrest/pgbackrest.conf

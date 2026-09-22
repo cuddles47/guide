@@ -54,6 +54,34 @@ Thêm vào crontab của user postgres:
 
 Script sẽ ưu tiên chạy trên sync standby. Nếu không có sync standby, nó sẽ chạy trên replica có lag thấp nhất. Script bỏ qua primary và các replica có lag cao hơn.
 
+### 7. Tích hợp MinIO (tùy chọn)
+
+Để đẩy backup lên MinIO (S3-compatible), chỉnh sửa `cron-backup.sh`:
+
+```bash
+MINIO_ENABLED=true
+MINIO_ENDPOINT=http://100.85.22.67:9001
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin123
+MINIO_BUCKET=pgbackrest-backup
+```
+
+Script sẽ sử dụng `mc` (MinIO Client) hoặc `aws` CLI (tùy tool có sẵn) để sync repository pgbackrest lên MinIO sau khi backup hoàn tất.
+
+### 8. Tích hợp NetBackup (tùy chọn)
+
+Để đẩy backup lên Veritas NetBackup, chỉnh sửa `cron-backup.sh`:
+
+```bash
+NETBACKUP_ENABLED=true
+NETBACKUP_POLICY=PostgreSQL_Backup
+NETBACKUP_CLIENT=$(hostname)
+NETBACKUP_SERVER=netbackup-master
+PG_BACKUP_REPO=/var/lib/pgbackrest
+```
+
+Script sẽ sử dụng `nbbackup` hoặc `bpcd` (tùy tool có sẵn) để đẩy repository pgbackrest lên NetBackup sau khi backup hoàn tất.
+
 ## Các thao tác thường dùng
 
 ### Backup thủ công
